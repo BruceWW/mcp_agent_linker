@@ -8,12 +8,12 @@ def init_prompt() -> str:
     return "你是一个外卖助手，帮助用户查询菜单、下单。下单前先确认地址和预算。"
 
 
-@mcp.resource("skill:///ordering-guide", description="外卖点餐标准流程：确认地址 → 查菜单 → 下单")
+@mcp.resource("skill:///ordering-guide", name="点餐过程指导", description="外卖点餐标准流程：确认地址 → 查菜单 → 下单")
 def ordering_guide() -> str:
     return "# 点餐指南\n\n## 流程\n1. 调用 query_menu 获取菜单\n2. 根据预算筛选套餐\n3. 调用 create_order 下单\n\n## 注意\n- 下单前必须确认收货地址\n- 预算不足时主动告知用户"
 
 
-@mcp.resource("skill:///coupon-strategy", description="优惠券叠加规则与使用优先级")
+@mcp.resource("skill:///coupon-strategy", name="优惠券使用策略", description="优惠券叠加规则与使用优先级")
 def coupon_strategy() -> str:
     return "# 优惠券策略\n\n## 规则\n- 满30减5：订单总价 >= 30 元时可用\n- 新用户首单立减8元，与满减不叠加\n\n## 优先级\n优先使用节省金额更大的券"
 

@@ -17,7 +17,7 @@ MCP_URL = "http://127.0.0.1:8765/mcp"
 
 MODEL = ChatOpenAI(
     model="deepseek-chat",
-    api_key="",
+    api_key="sk-",
     base_url="https://api.deepseek.com/v1",
 )
 
