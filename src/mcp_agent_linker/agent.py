@@ -4,22 +4,16 @@
 由主 Agent 的 LLM 根据用户意图路由到对应子 Agent。
 """
 
-import asyncio
-import concurrent.futures
 from typing import Any
 
-from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
-from langchain_core.messages import HumanMessage
+from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
-from langchain.agents import create_agent, AgentState
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 
 from mcp_agent_linker.loader import MCPLoader
-
-
-class _TaskInput(BaseModel):
-    task: str = Field(description="要委托给子 Agent 的具体任务描述")
+from mcp_agent_linker.models import TaskInput
 
 
 class MCPAgentLinker(CompiledStateGraph):
@@ -37,6 +31,9 @@ class MCPAgentLinker(CompiledStateGraph):
         result = agent.invoke({"messages": [{"role": "user", "content": "帮我点个午饭"}]})
         print(result["messages"][-1].content)
     """
+
+    def __init__(self, model: str | BaseChatModel, mcp_loaders: list[MCPLoader], **kwargs: Any) -> None:
+        pass  # instance is fully built in __new__, skip CompiledStateGraph.__init__
 
     def __new__(
         cls,
@@ -89,5 +86,5 @@ class MCPAgentLinker(CompiledStateGraph):
             coroutine=_arun,
             name=loader.name,
             description=content,
-            args_schema=_TaskInput,
+            args_schema=TaskInput,
         )
