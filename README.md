@@ -17,7 +17,7 @@
 - **Resources** — 提供领域知识和 Skills（约定 URI 格式 `skill:///<name>`）
 - **Tools** — 暴露可执行的能力
 
-因此，**一个 MCP server = 一个完整的域 Agent 定义**。本项目基于此构建通用框架：配置 MCP 地址列表，框架自动实例化对应的域 Agent，子 Agent 工具上下文完全隔离。
+因此，**一个 MCP server = 一个完整的域 Agent 定义**。本项目基于此构建通用框架：每个 MCP server 被封装为一个标准 LangChain Tool，主 Agent 按意图路由，子 Agent 工具上下文完全隔离。
 
 ```
 接入新领域 = 新增一行 MCP 地址配置，不改框架代码
@@ -26,20 +26,22 @@
 ## 架构
 
 ```
-配置层: [MCP-A地址, MCP-B地址, ...]
+[MCP-A地址, MCP-B地址, ...]
          │
+         ▼ MCPTool.from_mcp()
+[MCPTool-A, MCPTool-B, ...]   ← 标准 LangChain StructuredTool
+         │
+         ▼ create_agent(model, tools=...)
+主 Agent（意图识别 + 路由）
+         │ 调用对应 MCPTool
          ▼
-MCPAgentLinker（主 Agent：意图识别 + 路由）
-         │ 识别到目标域，调用对应子 Agent tool
-         ▼
-MCPLoader（子 Agent 工厂）
-  └─ 从 MCP server 读取 prompt / tools / skills
-  └─ 实例化子 Agent（LangGraph ReAct 图）
+MCPTool 内部：lazy 创建子 Agent
+  └─ MCPLoader 拉取 prompt / tools / skills
+  └─ create_agent 实例化子 Agent
          │
          ▼
 子 Agent（工具上下文完全隔离）
-  └─ 调用 MCP tools 执行任务
-  └─ 返回文本结果给主 Agent
+  └─ 调用 MCP tools 执行任务 → 返回文本结果
 ```
 
 **渐进式 Skill 披露**：子 Agent 启动时只注入 skill 目录（name + description），按需再加载具体内容，避免 prompt 膨胀。
@@ -58,39 +60,57 @@ uv sync --extra dev
 
 ## 快速上手
 
-### 方式一：直接用 MCPAgentLinker（推荐）
+### 方式一：MCPTool + 标准 create_agent（完全兼容 LangChain）
 
 ```python
+from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from mcp_broker import MCPLoader, MCPAgentLinker
 from langchain_core.messages import HumanMessage
+from mcp_broker import MCPTool
 
 model = ChatOpenAI(model="deepseek-chat", base_url="https://api.deepseek.com/v1")
 
-loaders = [
-    MCPLoader("http://food-mcp/mcp", name="food_agent"),
-    MCPLoader("http://calendar-mcp/mcp", name="calendar_agent"),
+# 每个 MCP server 变成一个标准 LangChain Tool
+tools = [
+    MCPTool.from_mcp("http://food-mcp/mcp", model),
+    MCPTool.from_mcp("http://calendar-mcp/mcp", model),
 ]
 
-agent = MCPAgentLinker(model=model, mcp_loaders=loaders)
+# 直接传给任意 LangChain agent
+agent = create_agent(model, tools=tools)
 result = agent.invoke({"messages": [HumanMessage(content="帮我点个午饭，30 块以内")]})
 print(result["messages"][-1].content)
 ```
 
-### 方式二：手动加载 AgentDef（自定义集成）
+### 方式二：MCPAgentLinker 便捷封装
 
 ```python
-from mcp_broker import MCPLoader
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+from mcp_broker import MCPAgentLinker
+
+model = ChatOpenAI(model="deepseek-chat", base_url="https://api.deepseek.com/v1")
+
+agent = MCPAgentLinker(
+    model=model,
+    mcp_urls=["http://food-mcp/mcp", "http://calendar-mcp/mcp"],
+)
+result = agent.invoke({"messages": [HumanMessage(content="帮我点个午饭，30 块以内")]})
+print(result["messages"][-1].content)
+```
+
+### 方式三：手动加载 AgentDef（自定义集成）
+
+```python
 from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
+from mcp_broker import MCPLoader
 
-# 从 MCP server 加载域 Agent 定义
 agent_def = MCPLoader("http://your-mcp-server/mcp").load()
-
 # agent_def.system_prompt — MCP prompt 文本
 # agent_def.tools         — LangChain BaseTool 列表
 # agent_def.skills        — Skill 对象列表（来自 skill:/// resources）
 
-# 注入 skill 目录到 system prompt（渐进式披露）
 skill_index = "\n".join(s.summary() for s in agent_def.skills)
 system = agent_def.system_prompt + f"\n\n## 可用 Skills\n{skill_index}"
 
@@ -105,17 +125,16 @@ result = agent.invoke({"messages": [HumanMessage(content="帮我点个午饭，3
 uv run python tests/food_agent_server.py
 
 # 运行 MCPLoader 测试
-uv run pytest tests/test_loader.py -v -s
+uv run --extra dev python -m pytest tests/test_loader.py -v -s
 
-# 运行 MCPAgentLinker 端到端测试（需先启动 food_agent_server）
-uv run pytest tests/test_agent.py -v -s
+# 运行端到端测试（需先启动 food_agent_server）
+uv run --extra dev python -m pytest tests/test_agent.py -v -s
 ```
 
 ## 实现进度
 
 - [x] 核心架构设计
 - [x] `MCPLoader` — 从 MCP server 读取 prompt / tools / skills，返回 `AgentDef`
-- [x] `MCPAgentLinker` — 主 Agent，传入 MCP 地址列表直接创建可执行 Agent
-- [x] 主 Agent 编排层 — 基于 skill description 做意图路由，调用对应子 Agent
+- [x] `MCPTool` — 将 MCP server 封装为标准 LangChain StructuredTool，完全兼容 `create_agent`
+- [x] `MCPAgentLinker` — 便捷封装，传入 MCP 地址列表直接返回可执行 Agent
 - [x] 渐进式 Skill 披露 — `Skill.summary()` 目录层 / `Skill.full_text()` 内容层
-- [ ] `ResourcesParser` — 扩展 skill 解析逻辑（当前由 MCPLoader 内部处理）
